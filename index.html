@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>เว็บวัดที่ดิน</title>
+    <style>
+        /* ส่วนนี้คือการปรับแต่งหน้าตาให้สวยงาม */
+        #map {
+            height: 600px;
+            width: 100%;
+            border: 2px solid #4CAF50;
+            border-radius: 8px;
+        }
+        .toolbar {
+            margin: 15px 0;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 5px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+        .btn {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        .btn-blue { background-color: #008CBA; }
+        .btn-orange { background-color: #f39c12; }
+        .info-box {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-top: 15px;
+        }
+        .coordinate-input {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .coordinate-input input {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .screenshot-tip {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🗺️ ระบบวัดพื้นที่และพิกัดที่ดิน</h1>
+
+    <!-- แผนที่ -->
+    <div id="map"></div>
+
+    <!-- แถบเครื่องมือ -->
+    <div class="toolbar">
+        <button class="btn btn-blue" onclick="startMeasuring()">📏 เริ่มวัดพื้นที่</button>
+        <button class="btn" onclick="clearMeasurement()">🗑️ ล้างการวัด</button>
+        <button class="btn btn-orange" onclick="zoomIn()">🔍+ ซูมเข้า</button>
+        <button class="btn btn-orange" onclick="zoomOut()">🔍- ซูมออก</button>
+        <button class="btn" onclick="resetView()">🏠 กลับมุมมองเริ่มต้น</button>
+        <button class="btn" onclick="captureScreen()" style="background:#6c757d;">📸 แคปหน้าจอ</button>
+    </div>
+
+    <!-- ส่วนแสดงข้อมูล -->
+    <div class="info-box">
+        <h3>📋 ข้อมูลพิกัดและพื้นที่</h3>
+        <div class="coordinate-input">
+            <span>📍 พิกัดปัจจุบัน (ลองจิจูด, ละติจูด):</span>
+            <input type="text" id="latInput" placeholder="ละติจูด" value="13.7563">
+            <input type="text" id="lngInput" placeholder="ลองจิจูด" value="100.5018">
+            <button class="btn btn-blue" onclick="goToCoordinate()">ไปที่พิกัดนี้</button>
+        </div>
+        <div id="areaDisplay" style="margin-top:10px; font-weight:bold; color:#d35400;">
+            ⬛ พื้นที่ที่วัดได้: - ตร.ม.
+        </div>
+        <div id="coordinateDisplay">
+            🖱️ คลิกที่แผนที่เพื่อดูพิกัด (ลองจิจูด, ละติจูด)
+        </div>
+        
+        <!-- คำแนะนำการแคปหน้าจอ -->
+        <div class="screenshot-tip">
+            💡 <strong>วิธีแคปหน้าจอแผนที่:</strong> 
+            บน Windows ใช้ <kbd>PrtScn</kbd> หรือโปรแกรม Snipping Tool, 
+            บน Mac ใช้ <kbd>Shift + Command + 4</kbd>, 
+            หรือใช้ส่วนขยายในเบราว์เซอร์เพื่อจับภาพเฉพาะส่วนของหน้าเว็บ[citation:1][citation:5]
+        </div>
+    </div>
+
+    <!-- โหลด Google Maps API และ Library ต่างๆ -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=drawing,geometry&callback=initMap" async defer></script>
+
+    <script>
+        // --- ตัวแปรหลัก ---
+        let map;
+        let drawingManager;
+        let selectedPolygon = null;
+        let areaListener = null;
+        let mapClickListener = null;
+
+        // ฟังก์ชันเริ่มต้นแผนที่
+        function initMap() {
+            // พิกัดเริ่มต้น (กรุงเทพฯ)
+            const initialLocation = { lat: 13.7563, lng: 100.5018 };
+
+            map = new google.maps.Map(document.getElementById("map"), {
+                zoom: 15,
+                center: initialLocation,
+                mapTypeId: 'satellite', // ใช้ดาวเทียมเพื่อดูที่ดินชัดเจน
+            });
+
+            // เปิดใช้งาน Drawing Manager (สำหรับวัดพื้นที่)
+            drawingManager = new google.maps.drawing.DrawingManager({
+                drawingMode: null,
+                drawingControl: true,
+                drawingControlOptions: {
+                    position: google.maps.ControlPosition.TOP_CENTER,
+                    drawingModes: [google.maps.drawing.OverlayType.POLYGON],
+                },
+                polygonOptions: {
+                    fillColor: '#ff0000',
+                    fillOpacity: 0.35,
+                    strokeWeight: 2,
+                    editable: true,
+                    draggable: true,
+                }
+            });
+            drawingManager.setMap(map);
+
+            // เมื่อผู้ใช้วาดรูปเสร็จ
+            google.maps.event.addListener(drawingManager, 'overlaycomplete', function(event) {
+                if (event.type === 'polygon') {
+                    // ลบรูป polygon เก่าถ้ามี
+                    if (selectedPolygon) {
+                        selectedPolygon.setMap(null);
+                    }
+                    selectedPolygon = event.overlay;
+                    calculateAndDisplayArea(selectedPolygon);
+                    
+                    // ทำให้ polygon แก้ไขได้
+                    selectedPolygon.setEditable(true);
+                    selectedPolygon.setDraggable(true);
+
+                    // อัปเดตพื้นที่เมื่อแก้ไข
+                    google.maps.event.addListener(selectedPolygon.getPath(), 'insert_at', function() {
+                        calculateAndDisplayArea(selectedPolygon);
+                    });
+                    google.maps.event.addListener(selectedPolygon.getPath(), 'remove_at', function() {
+                        calculateAndDisplayArea(selectedPolygon);
+                    });
+                    google.maps.event.addListener(selectedPolygon.getPath(), 'set_at', function() {
+                        calculateAndDisplayArea(selectedPolygon);
+                    });
+                }
+            });
+
+            // แสดงพิกัดเมื่อคลิกบนแผนที่
+            mapClickListener = google.maps.event.addListener(map, 'click', function(event) {
+                const lat = event.latLng.lat();
+                const lng = event.latLng.lng();
+                document.getElementById('coordinateDisplay').innerHTML = 
+                    `🖱️ พิกัดที่คลิก: (ลองจิจูด: ${lng.toFixed(6)}, ละติจูด: ${lat.toFixed(6)})`;
+            });
+
+            // โหลดข้อมูลพิกัดจากฐานข้อมูล (ตัวอย่าง)
+            loadCoordinatesFromDatabase();
+        }
+
+        // --- ฟังก์ชันวัดพื้นที่ ---
+        function startMeasuring() {
+            drawingManager.setDrawingMode(google.maps.drawing.OverlayType.POLYGON);
+            document.getElementById('areaDisplay').innerHTML = '📐 คลิกที่แผนที่เพื่อเริ่มวาดรูปวัดพื้นที่...';
+        }
+
+        function calculateAndDisplayArea(polygon) {
+            const vertices = polygon.getPath();
+            if (vertices.getLength() < 3) {
+                document.getElementById('areaDisplay').innerHTML = '⚠️ ต้องคลิกอย่างน้อย 3 จุดเพื่อวัดพื้นที่';
+                return;
+            }
+            // คำนวณพื้นที่ในหน่วยตารางเมตร
+            const areaSqMeters = google.maps.geometry.spherical.computeArea(vertices);
+            document.getElementById('areaDisplay').innerHTML = 
+                `⬛ พื้นที่ที่วัดได้: <strong>${areaSqMeters.toFixed(2)}</strong> ตร.ม. (ประมาณ ${(areaSqMeters/400).toFixed(2)} ไร่)`;
+        }
+
+        function clearMeasurement() {
+            if (selectedPolygon) {
+                selectedPolygon.setMap(null);
+                selectedPolygon = null;
+            }
+            drawingManager.setDrawingMode(null);
+            document.getElementById('areaDisplay').innerHTML = '⬛ พื้นที่ที่วัดได้: - ตร.ม.';
+        }
+
+        // --- ฟังก์ชันซูม ---
+        function zoomIn() {
+            map.setZoom(map.getZoom() + 1);
+        }
+
+        function zoomOut() {
+            map.setZoom(map.getZoom() - 1);
+        }
+
+        function resetView() {
+            map.setCenter({ lat: 13.7563, lng: 100.5018 });
+            map.setZoom(15);
+        }
+
+        // --- ฟังก์ชันจัดการพิกัด ---
+        function goToCoordinate() {
+            const lat = parseFloat(document.getElementById('latInput').value);
+            const lng = parseFloat(document.getElementById('lngInput').value);
+            if (!isNaN(lat) && !isNaN(lng)) {
+                map.setCenter({ lat: lat, lng: lng });
+                map.setZoom(18);
+            } else {
+                alert('กรุณากรอกพิกัดให้ถูกต้อง');
+            }
+        }
+
+        // จำลองการโหลดข้อมูลจากฐานข้อมูล
+        function loadCoordinatesFromDatabase() {
+            // ในความเป็นจริงจะใช้ AJAX/Fetch เพื่อเรียก API
+            console.log("📡 กำลังโหลดข้อมูลพิกัดจากฐานข้อมูล...");
+            // ตัวอย่าง: แสดงพิกัดที่บันทึกไว้
+            const savedCoords = [
+                { name: "แปลงที่ 1", lat: 13.7563, lng: 100.5018 },
+                { name: "แปลงที่ 2", lat: 13.7463, lng: 100.5118 }
+            ];
+            // สามารถเพิ่ม Marker หรือแสดงใน UI ได้
+        }
+
+        // --- ฟังก์ชันแคปหน้าจอ (แนะนำผู้ใช้) ---
+        function captureScreen() {
+            alert(
+                "📸 วิธีการแคปหน้าจอแผนที่:\n\n" +
+                "1. ใช้เครื่องมือ Snipping Tool (Windows) หรือ Screenshot (Mac)\n" +
+                "2. หรือใช้ส่วนขยายของเบราว์เซอร์ เช่น 'GoFullPage' หรือ 'FireShot'\n" +
+                "3. ภาพจะถูกบันทึกไว้ในเครื่องของคุณ\n\n" +
+                "💡 เคล็ดลับ: ปิดแผงควบคุมหรือซูมให้เต็มหน้าจอก่อนแคปเพื่อให้ได้ภาพที่ชัดเจน"
+            );
+        }
+
+        // เมื่อโหลดหน้าเว็บเสร็จ
+        window.onload = function() {
+            // แสดงข้อความแนะนำ
+            console.log("🌐 เว็บวัดที่ดินพร้อมใช้งานแล้ว!");
+            document.getElementById('coordinateDisplay').innerHTML = 
+                '🖱️ คลิกที่แผนที่เพื่อดูพิกัด หรือใช้ปุ่มวัดพื้นที่เพื่อเริ่มต้น';
+        };
+    </script>
+
+</body>
+</html>
